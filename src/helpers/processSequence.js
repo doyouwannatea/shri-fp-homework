@@ -1,8 +1,3 @@
-import { isNumber } from 'lodash';
-import {
-    both, curry, flip, gt, lt, not
-} from 'ramda';
-
 /**
  * @file Домашка по FP ч. 2
  * 
@@ -19,69 +14,102 @@ import {
  * Иногда промисы от API будут приходить в состояние rejected, (прямо как и API в реальной жизни)
  * Ответ будет приходить в поле {result}
  */
+
+import { isNumber } from 'lodash';
+import {
+    both,
+    compose,
+    curry,
+    flip,
+    gt,
+    isNil,
+    lt,
+    not,
+    pipeWith,
+    prop,
+    tap
+} from 'ramda';
+
 import Api from '../tools/api';
 
 const api = new Api();
 
-// Хелперы для api
-const convertApi = api.get('https://api.tech/numbers/base');
-const animalsApi = id => api.get('https://animals.tech/' + id, {});
+const processSequence = ({ value, writeLog, handleSuccess, handleError }) => {
 
-// Хелперы
-const remaind = curry((divider, value) => value % divider);
-const pow = curry(flip(Math.pow));
+    // Pipes
+    // --------------------------------------------------------------------
+    const pipeWithPromise = pipeWith(async (toNext, value) => {
+        try {
+            const res = await value;
+            return toNext(res);
+        } catch (error) {
+            handleError(error);
+        }
+    });
 
-const square = pow(2);
-const remainderOfThree = remaind(3);
+    const pipeWhileNotNil = pipeWith((f, val) => isNil(val) ? val : f(val));
+    // --------------------------------------------------------------------
 
-const isPositive = both(isNumber, lt(0));
-const getLength = value => String(value).length;
+    // Helpers
+    // --------------------------------------------------------------------
+    const getResultProp = prop('result');
+    const getLength = value => String(value).length;
+    const log = tap(writeLog);
 
-const processSequence = async ({ value, writeLog, handleSuccess, handleError }) => {
-    writeLog(value);
+    // Predicats
+    const lt10 = flip(lt)(10);
+    const gt2 = flip(gt)(2);
+    const isPositive = both(isNumber, lt(0));
+    const isNegativeNumber = compose(not, isPositive);
+    const isLengthGte10 = compose(not, lt10, getLength);
+    const isLengthLte2 = compose(not, gt2, getLength);
+    const validate = value => {
+        if (isNegativeNumber(value))
+            return handleError(`Value must be positive number: ${value}`);
 
-    let numValue = Number(value);
-    const length = getLength(value);
+        if (isLengthGte10(value))
+            return handleError(`Length must be less than 10: ${value}`);
 
-    const lt10 = lt(length, 10);
-    const gt2 = gt(length, 2);
+        if (isLengthLte2(value))
+            return handleError(`Length must be greater than 2: ${value}`);
 
-    if (not(isPositive(numValue)))
-        return handleError(`Value must be positive number: ${value}`);
+        return value;
+    };
 
-    if (not(lt10))
-        return handleError(`Length must be less than 10: ${value}`);
+    // Math operations
+    const remaind = curry((divider, value) => value % divider);
+    const remainderOfThree = remaind(3);
 
-    if (not(gt2))
-        return handleError(`Length must be greater than 2: ${value}`);
+    const pow = curry(flip(Math.pow));
+    const square = pow(2);
 
-    numValue = Math.round(numValue);
-    writeLog(numValue);
+    // Helpers for api
+    const convertApi = api.get('https://api.tech/numbers/base');
+    const fromDecimalToBinary = value => convertApi({ from: 10, to: 2, number: value });
+    const animalsApi = id => api.get('https://animals.tech/' + id, {});
+    // --------------------------------------------------------------------
 
-    try {
-        let {
-            result: binaryValue
-        } = await convertApi({ from: 10, to: 2, number: numValue });
-
-        writeLog(binaryValue);
-
-        binaryValue = getLength(binaryValue);
-        writeLog(binaryValue);
-
-        binaryValue = square(binaryValue);
-        writeLog(binaryValue);
-
-        binaryValue = remainderOfThree(binaryValue);
-        writeLog(binaryValue);
-
-        const {
-            result: animal
-        } = await animalsApi(binaryValue);
-
-        handleSuccess(animal);
-    } catch (error) {
-        handleError('Network error: ' + error);
-    }
+    return pipeWhileNotNil([
+        log,
+        Number,
+        validate,
+        Math.round,
+        log,
+        pipeWithPromise([
+            fromDecimalToBinary,
+            getResultProp,
+            log,
+            getLength,
+            log,
+            square,
+            log,
+            remainderOfThree,
+            log,
+            animalsApi,
+            getResultProp,
+            handleSuccess
+        ])
+    ])(value);
 };
 
 export default processSequence;
